@@ -28,6 +28,7 @@ static int upcase_open(struct inode* inode, struct file* file);
 static int upcase_close(struct inode* inode, struct file* file);
 static ssize_t upcase_read(struct file* file, char* __user out, size_t size, loff_t* off);
 static ssize_t upcase_write(struct file* file, const char* __user in, size_t size, loff_t* off);
+static inline void upcase_string(char* start, char* end);
 
 static struct file_operations upcase_fops = {
 	.owner = THIS_MODULE,
@@ -161,7 +162,7 @@ static ssize_t upcase_write(struct file* file, const char* __user in, size_t siz
 	buffer->location = buffer->data;
 
 	if (buffer->end > buffer->data) {
-		printk(KERN_INFO "upcase code execute!\n");
+		upcase_string(buffer->data, buffer->end);
 	}
 
 	wake_up_interruptible(&buffer->read_queue);
@@ -171,6 +172,16 @@ static ssize_t upcase_write(struct file* file, const char* __user in, size_t siz
 out:
 	return result;
 
+}
+
+static inline void upcase_string(char* start, char* end)
+{
+	while (start < end) {
+		if (*start <= 'z' && *start >= 'a') {
+			*start += 'A' - 'a';
+		}
+		start += 1;
+	}
 }
 
 static int __init upcase_init(void)
