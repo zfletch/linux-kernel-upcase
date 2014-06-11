@@ -1,0 +1,13 @@
+# Object files
+*.o
+*.ko
+
+# Executables
+*.out
+
+# Kernel stuff
+.tmp_versions
+*.cmd
+*.symvers
+modules.order
+*.mod.*
