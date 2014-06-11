@@ -7,6 +7,7 @@
 #include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/uaccess.h>
+#include <linux/mutex.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Zachary Fletcher <zfletch2@gmail.com>");
@@ -18,6 +19,7 @@ struct upcase_buffer {
 	char* location;
 	size_t size;
 	wait_queue_head_t read_queue;
+	struct mutex lock;
 };
 
 static int __init upcase_init(void);
@@ -70,6 +72,7 @@ static struct upcase_buffer* upcase_buffer_alloc(size_t size)
 		buffer->location = buffer->data;
 		buffer->end = buffer->data;
 		init_waitqueue_head(&buffer->read_queue);
+		mutex_init(&buffer->lock);
 		goto out_success;
 	}
 
@@ -118,7 +121,14 @@ static ssize_t upcase_read(struct file* file, char* __user out, size_t size, lof
 	struct upcase_buffer* buffer = (struct upcase_buffer*) file->private_data;
 	ssize_t result;
 
+	if (mutex_lock_interruptible(&buffer->lock)) {
+		result = -ERESTARTSYS;
+		goto out;
+	}
+
 	while (buffer->location == buffer->end) {
+		mutex_unlock(&buffer->lock);
+
 		if (file->f_flags & O_NONBLOCK) {
 			result = -EAGAIN;
 			goto out;
@@ -127,19 +137,27 @@ static ssize_t upcase_read(struct file* file, char* __user out, size_t size, lof
 			result = -ERESTARTSYS;
 			goto out;
 		}
+		if (mutex_lock_interruptible(&buffer->lock)) {
+			result = -ERESTARTSYS;
+			goto out;
+		}
 	}
 
 	size = min(size, (size_t) (buffer->end - buffer->location));
 	if (copy_to_user(out, buffer->location, size)) {
 		result = -EFAULT;
-		goto out;
+		goto out_unlock;
 	}
 
 	buffer->location += size;
 	result = size;
-	goto out;
+	goto out_unlock;
 
 out:
+	return result;
+
+out_unlock:
+	mutex_unlock(&buffer->lock);
 	return result;
 
 }
@@ -149,13 +167,18 @@ static ssize_t upcase_write(struct file* file, const char* __user in, size_t siz
 	struct upcase_buffer* buffer = (struct upcase_buffer*) file->private_data;
 	ssize_t result;
 
+	if (mutex_lock_interruptible(&buffer->lock)) {
+		result = -ERESTARTSYS;
+		goto out;
+	}
+
 	if (size > buffer_size) {
 		result = -EFBIG;
-		goto out;
+		goto out_unlock;
 	}
 	if (copy_from_user(buffer->data, in, size)) {
 		result = -EFAULT;
-		goto out;
+		goto out_unlock;
 	}
 
 	buffer->end = buffer->data + size;
@@ -167,9 +190,13 @@ static ssize_t upcase_write(struct file* file, const char* __user in, size_t siz
 
 	wake_up_interruptible(&buffer->read_queue);
 	result = size;
-	goto out;
+	goto out_unlock;
 
 out:
+	return result;
+
+out_unlock:
+	mutex_unlock(&buffer->lock);
 	return result;
 
 }
